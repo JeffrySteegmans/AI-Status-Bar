@@ -16,7 +16,7 @@ static class Program
           AIStatusBar.exe --corner tr     tl tc tr bl bc br (default bc = bottom centre)
           AIStatusBar.exe --no-adapt      fixed dark background (skip colour sampling)
           AIStatusBar.exe --taskbar       dock into the Windows taskbar, left of the tray
-
+                    AIStatusBar.exe --tray          start minimized to the tray (icon is always in the tray; popup when a session needs you while minimized)
           AIStatusBar.exe --install [bar options]   install hooks, autostart, start now
           AIStatusBar.exe --uninstall
           AIStatusBar.exe --print-config            Claude Code hooks JSON
@@ -49,7 +49,7 @@ static class Program
         if (args.Length > 0 && args[0] == "--install") return Installer.Install(args[1..]);
         if (args.Contains("--uninstall")) return Installer.Uninstall();
 
-        var opt = new BarOptions { Adapt = !args.Contains("--no-adapt"), Taskbar = args.Contains("--taskbar") };
+        var opt = new BarOptions { Adapt = !args.Contains("--no-adapt"), Taskbar = args.Contains("--taskbar"), Tray = args.Contains("--tray") };
         var ci = Array.IndexOf(args, "--corner");
         if (ci >= 0 && ci < args.Length - 1)
         {

@@ -16,6 +16,7 @@ public sealed class BarOptions
     public string Corner = "bc";
     public bool Adapt = true;
     public bool Taskbar;
+    public bool Tray; // start minimized to the notification area
 }
 
 /// <summary>Borderless always-on-top strip: one pill per AI session.</summary>
@@ -52,6 +53,10 @@ public sealed class BarWindow : Window
     (double R, double G, double B) cur = BgDark, target = BgDark;
     Theme? applied;
     string lastOrder = "";
+    readonly TrayIcon tray = new();
+    readonly Dictionary<string, SessState> prevStates = new();
+    bool trayHidden;
+    int notifyPid;
     bool moved, dragging, hidden;
     Native.POINT dragStart;
     PointInt32 dragOrigin;
@@ -95,7 +100,7 @@ public sealed class BarWindow : Window
         {
             Child = panel,
             Padding = opt.Taskbar ? new Thickness(6, 1, 6, 1) : new Thickness(6, 3, 6, 3),
-            BorderThickness = new Thickness(0),
+            BorderThickness = new Thickness(1),
             Background = new SolidColorBrush(Rgb(0x1E, 0x1F, 0x22)),
         };
         Content = root;
@@ -105,8 +110,11 @@ public sealed class BarWindow : Window
         reset.Click += (_, _) => { moved = false; Reposition(); };
         var clear = new MenuFlyoutItem { Text = "Clear sessions" };
         clear.Click += (_, _) => store.Clear();
+        var minimize = new MenuFlyoutItem { Text = "Minimize to tray" };
+        minimize.Click += (_, _) => MinimizeToTray();
         var quit = new MenuFlyoutItem { Text = "Quit" };
-        quit.Click += (_, _) => Application.Current.Exit();
+        quit.Click += (_, _) => Quit();
+        menu.Items.Add(minimize);
         menu.Items.Add(reset);
         menu.Items.Add(clear);
         menu.Items.Add(new MenuFlyoutSeparator());
@@ -135,7 +143,67 @@ public sealed class BarWindow : Window
             sampler.Tick += (_, _) => Sample();
             sampler.Start();
         }
+        tray.Activated += () => { if (trayHidden) RestoreFromTray(); else MinimizeToTray(); };
+        tray.QuitRequested += Quit;
+        tray.BalloonClicked += () => { if (notifyPid > 0) Native.FocusProcessWindow(notifyPid); };
+        Closed += (_, _) => tray.Dispose();
         RefreshCells();
+        if (opt.Tray) MinimizeToTray();
+    }
+
+    // ------------------------------------------------------------ tray
+
+    void Quit()
+    {
+        tray.Dispose();
+        Application.Current.Exit();
+    }
+
+    void MinimizeToTray()
+    {
+        trayHidden = true;
+        tray.BarVisible = false;
+        appWindow.Hide();
+    }
+
+    void RestoreFromTray()
+    {
+        if (!trayHidden) return;
+        trayHidden = false;
+        tray.BarVisible = true;
+        appWindow.Show(false);
+        Reposition();
+        Native.ForceTopmost(hwnd);
+    }
+
+    static SessState Urgent(List<Session> rows) =>
+        rows.Any(r => r.State == SessState.Waiting) ? SessState.Waiting
+        : rows.Any(r => r.State == SessState.Working) ? SessState.Working : SessState.Idle;
+
+    void UpdateTray(List<Session> rows)
+    {
+        var n = rows.Count(r => r.State == SessState.Waiting);
+        var tip = rows.Count == 0 ? "AI status: no sessions"
+            : n > 0 ? $"AI status: {n} need{(n == 1 ? "s" : "")} you"
+            : $"AI status: {rows.Count} session{(rows.Count == 1 ? "" : "s")}";
+        tray.Show(Urgent(rows), tip);
+    }
+
+    /// <summary>Keep the icon current; while the bar is minimized, pop a notification when a session starts waiting.</summary>
+    void NotifyTray(List<Session> rows)
+    {
+        UpdateTray(rows);
+        if (trayHidden)
+        {
+            foreach (var r in rows)
+            {
+                if (r.State != SessState.Waiting || prevStates.GetValueOrDefault(r.Id) == SessState.Waiting) continue;
+                notifyPid = r.Pid;
+                tray.Balloon(SessState.Waiting, $"{r.Project} needs you", r.Detail.Length > 0 && r.Detail != "thinking" ? r.Detail : "A session is waiting for your input.");
+            }
+        }
+        prevStates.Clear();
+        foreach (var r in rows) prevStates[r.Id] = r.State;
     }
 
     // ------------------------------------------------------------ drag
@@ -283,6 +351,7 @@ public sealed class BarWindow : Window
         {
             var th = ApplyTheme();
             var rows = store.Snapshot();
+            NotifyTray(rows);
             if (!opt.Taskbar && opt.Corner[0] == 'b') rows.Reverse(); // bottom-anchored: bar grows upward
             var ids = rows.Select(r => r.Id).ToHashSet();
             var changed = false;
@@ -344,6 +413,7 @@ public sealed class BarWindow : Window
     /// <summary>Follow the taskbar, stay on top of it, hide for fullscreen apps.</summary>
     void Dock()
     {
+        if (trayHidden) return;
         bool hide;
         try { hide = Native.FullscreenForeground(); }
         catch { hide = false; }
