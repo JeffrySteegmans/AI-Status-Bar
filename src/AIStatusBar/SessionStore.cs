@@ -14,6 +14,8 @@ public sealed class Session
     public string Detail = "", Cwd = "", Project = "", Agent = "claude";
     public string? TPath;
     public long? Tokens;
+    public double? Credits;
+    public int Pid;
 
     public Session Clone() => (Session)MemberwiseClone();
 }
@@ -36,6 +38,7 @@ public sealed class SessionStore
     sealed class UsageInfo
     {
         public long Off;
+        public double Nano;
         public Dictionary<string, long> Msgs = new();
     }
 
@@ -80,6 +83,16 @@ public sealed class SessionStore
             s.Agent = Get(p, "agent") ?? "claude";
             s.TPath = Get(p, "transcript_path", "transcriptPath") ?? s.TPath;
             s.Seen = now;
+            if (p["cli_pid"] is JsonValue pv && pv.TryGetValue<int>(out var pid) && pid > 0)
+            {
+                s.Pid = pid;
+                // one CLI process = one live session: /new etc. replaces the old pill
+                foreach (var old in state.Where(kv => kv.Key != sid && kv.Value.Pid == pid).Select(kv => kv.Key).ToList())
+                {
+                    state.Remove(old);
+                    usage.TryRemove(old, out _);
+                }
+            }
 
             var newState = s.State;
             var detail = s.Detail;
@@ -103,9 +116,10 @@ public sealed class SessionStore
             s.State = newState;
             s.Detail = detail;
         }
+        var isCopilot = Get(p, "agent") == "copilot";
         if (UsageEvents.Contains(ev))
         {
-            try { UpdateUsage(sid); }
+            try { if (isCopilot) UpdateCopilotUsage(sid); else UpdateUsage(sid); }
             catch (Exception e) // cost is a nicety; never break state tracking
             {
                 if (Verbose) Console.Error.WriteLine("usage error: " + e.Message);
@@ -175,12 +189,88 @@ public sealed class SessionStore
         }
     }
 
+    // Copilot CLI records usage in its own session log. Each model call writes a
+    // session.usage_record whose copilotUsage.totalNanoAiu is that call's cost in
+    // nano-AI-credits; the running sum / 1e9 is the "Session: X AIC used" the CLI shows.
+    static string CopilotEventsPath(string sid)
+    {
+        var home = Environment.GetEnvironmentVariable("COPILOT_HOME");
+        if (string.IsNullOrEmpty(home))
+            home = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".copilot");
+        return Path.Combine(home, "session-state", sid, "events.jsonl");
+    }
+
+    void UpdateCopilotUsage(string sid)
+    {
+        lock (usageGate)
+        {
+            string path;
+            try { path = CopilotEventsPath(sid); }
+            catch (ArgumentException) { return; } // session id not usable as a path segment
+            var u = usage.GetOrAdd(sid, _ => new UsageInfo());
+            var data = ReadNew(path, u);
+            if (data == null) return;
+            var end = Array.LastIndexOf(data, (byte)'\n');
+            if (end < 0) return;
+
+            foreach (var raw in Encoding.UTF8.GetString(data, 0, end + 1).Split('\n'))
+            {
+                var line = raw.Trim();
+                if (line.Length == 0) continue;
+                JsonObject? o;
+                try { o = JsonNode.Parse(line) as JsonObject; }
+                catch (System.Text.Json.JsonException) { continue; }
+                if (o == null || Get(o, "type") != "session.usage_record") continue;
+                var nano = (o["data"] as JsonObject)?["usage"] is JsonObject us
+                    && us["copilotUsage"] is JsonObject cu ? cu["totalNanoAiu"] : null;
+                if (nano is JsonValue nv && nv.TryGetValue<double>(out var n)) u.Nano += n;
+            }
+            u.Off += end + 1;
+            lock (gate)
+                if (state.TryGetValue(sid, out var s)) s.Credits = u.Nano / 1e9;
+        }
+    }
+
+    /// <summary>Keep Copilot AIC live between hook events (the CLI updates continuously).</summary>
+    public void StartUsagePoller() => new Thread(() =>
+    {
+        while (true)
+        {
+            Thread.Sleep(1500);
+            List<string> sids;
+            lock (gate) sids = state.Where(kv => kv.Value.Agent == "copilot").Select(kv => kv.Key).ToList();
+            foreach (var sid in sids)
+            {
+                try { UpdateCopilotUsage(sid); } catch { /* best effort */ }
+            }
+        }
+    }) { IsBackground = true }.Start();
+
+    /// <summary>Reads bytes appended since u.Off; resets the cursor if the file shrank.</summary>
+    static byte[]? ReadNew(string path, UsageInfo u)
+    {
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists) return null;
+            if (fi.Length < u.Off) { u.Off = 0; u.Nano = 0; u.Msgs.Clear(); }
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            fs.Seek(u.Off, SeekOrigin.Begin);
+            using var ms = new MemoryStream();
+            fs.CopyTo(ms);
+            return ms.ToArray();
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     public List<Session> Snapshot()
     {
         var now = Now();
         lock (gate)
         {
-            foreach (var k in state.Where(kv => now - kv.Value.Seen > StaleSecs).Select(kv => kv.Key).ToList())
+            foreach (var k in state.Where(kv => now - kv.Value.Seen > StaleSecs
+                         || (kv.Value.Pid != 0 && !Native.PidAlive(kv.Value.Pid))).Select(kv => kv.Key).ToList())
             {
                 state.Remove(k);
                 usage.TryRemove(k, out _);
@@ -217,6 +307,7 @@ public sealed class SessionStore
                 ["tpath"] = r.TPath,
                 ["seen"] = r.Seen,
                 ["tokens"] = r.Tokens,
+                ["credits"] = r.Credits,
                 ["id"] = r.Id,
             });
         return arr;

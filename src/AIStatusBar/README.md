@@ -1,7 +1,8 @@
 # AI Status Bar (C# / WinUI 3)
 
 Always-on-top strip showing your Claude Code and GitHub Copilot CLI sessions
-(working / needs you / idle, elapsed time, tokens for Claude).
+(working / needs you / idle, elapsed time, tokens for Claude, AI credits (AIC) for Copilot).
+Each session is tied to its CLI process, so `/new` replaces the old pill and closed CLIs disappear.
 
 ## Build
 Needs the .NET 8+ SDK. Run `build.bat`; output goes to `dist\`.

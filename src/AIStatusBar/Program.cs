@@ -73,6 +73,7 @@ static class Program
             return 1;
         }
         Console.WriteLine($"Collector listening on http://127.0.0.1:{Collector.Port}  (GET / for JSON state)");
+        store.StartUsagePoller();
 
         if (args.Contains("--demo")) new Thread(store.DemoFeed) { IsBackground = true }.Start();
         if (noUi)

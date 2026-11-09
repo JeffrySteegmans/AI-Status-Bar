@@ -32,6 +32,18 @@ static class Native
     [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr dc);
     [DllImport("gdi32.dll")] static extern uint GetPixel(IntPtr dc, int x, int y);
     [DllImport("user32.dll")] static extern int GetSystemMetrics(int idx);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("kernel32.dll")] static extern bool GetExitCodeProcess(IntPtr h, out uint code);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr h);
+
+    /// <summary>Is the process still running? Access denied counts as alive (exists, not ours).</summary>
+    public static bool PidAlive(int pid)
+    {
+        var h = OpenProcess(0x1000, false, pid); // PROCESS_QUERY_LIMITED_INFORMATION
+        if (h == IntPtr.Zero) return Marshal.GetLastWin32Error() == 5;
+        try { return GetExitCodeProcess(h, out var code) && code == 259; } // STILL_ACTIVE
+        finally { CloseHandle(h); }
+    }
 
     /// <summary>(left, top, right, bottom, trayLeft) of the primary taskbar, or null.</summary>
     public static (int L, int T, int R, int B, int TrayLeft)? TaskbarGeometry()

@@ -292,7 +292,8 @@ public sealed class BarWindow : Window
                 var who = r.Agent == "claude" ? "" : $" [{r.Agent}]";
                 var text = $"{r.Project}{who}  ·  {label}" + (extra.Length > 0 ? $" ({extra})" : "");
                 text += $"  {FmtElapsed(SessionStore.Now() - r.Since)}";
-                if (r.Tokens is { } tok) text += $"  ·  {FmtTokens(tok)} tok";
+                if (r.Credits is { } aic) text += $"  ·  {aic:0.00} AIC";
+                else if (r.Tokens is { } tok) text += $"  ·  {FmtTokens(tok)} tok";
                 if (cell.Label.Text != text)
                 {
                     cell.Label.Text = text;
