@@ -79,6 +79,77 @@ static class Native
         return (r.Left, r.Top, r.Right, r.Bottom);
     }
 
+    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+    [DllImport("user32.dll")] static extern bool IsIconic(IntPtr h);
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
+    [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
+    [DllImport("user32.dll")] static extern IntPtr GetWindow(IntPtr h, uint cmd);
+    [DllImport("user32.dll")] static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("kernel32.dll")] static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint pid);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32FirstW(IntPtr s, ref PROCESSENTRY32 e);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)] static extern bool Process32NextW(IntPtr s, ref PROCESSENTRY32 e);
+    delegate bool EnumProc(IntPtr h, IntPtr lp);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct PROCESSENTRY32
+    {
+        public uint dwSize, cntUsage, th32ProcessID;
+        public UIntPtr th32DefaultHeapID;
+        public uint th32ModuleID, cntThreads, th32ParentProcessID;
+        public int pcPriClassBase;
+        public uint dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string szExeFile;
+    }
+
+    static Dictionary<uint, uint> ParentMap()
+    {
+        var map = new Dictionary<uint, uint>();
+        var snap = CreateToolhelp32Snapshot(2, 0); // TH32CS_SNAPPROCESS
+        if (snap == new IntPtr(-1)) return map;
+        try
+        {
+            var e = new PROCESSENTRY32 { dwSize = (uint)Marshal.SizeOf<PROCESSENTRY32>() };
+            for (var ok = Process32FirstW(snap, ref e); ok; ok = Process32NextW(snap, ref e))
+                map[e.th32ProcessID] = e.th32ParentProcessID;
+        }
+        finally { CloseHandle(snap); }
+        return map;
+    }
+
+    /// <summary>Bring the terminal window hosting <paramref name="pid"/> (or its nearest ancestor with a window) to the front.</summary>
+    public static bool FocusProcessWindow(int pid)
+    {
+        var parents = ParentMap();
+        var chain = new List<uint>();
+        var cur = (uint)pid;
+        while (cur != 0 && !chain.Contains(cur) && chain.Count < 32)
+        {
+            chain.Add(cur);
+            if (!parents.TryGetValue(cur, out cur)) break;
+        }
+
+        var wins = new Dictionary<uint, IntPtr>();
+        EnumWindows((h, _) =>
+        {
+            if (GetWindow(h, 4) != IntPtr.Zero || !IsWindowVisible(h)) return true; // skip owned / hidden
+            GetWindowThreadProcessId(h, out var wp);
+            if (!wins.ContainsKey(wp)) wins[wp] = h;
+            return true;
+        }, IntPtr.Zero);
+
+        foreach (var p in chain)
+        {
+            if (!wins.TryGetValue(p, out var h)) continue;
+            if (IsIconic(h)) ShowWindow(h, 9); // SW_RESTORE
+            keybd_event(0x12, 0, 0, UIntPtr.Zero); // ALT tap unlocks SetForegroundWindow
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            return SetForegroundWindow(h);
+        }
+        return false;
+    }
+
     public static void ForceTopmost(IntPtr hwnd) =>
         SetWindowPos(hwnd, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // TOPMOST, NOSIZE|NOMOVE|NOACTIVATE
 

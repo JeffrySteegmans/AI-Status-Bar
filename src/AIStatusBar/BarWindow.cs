@@ -160,8 +160,25 @@ public sealed class BarWindow : Window
 
     void OnRelease(object s, PointerRoutedEventArgs e)
     {
+        var wasClick = dragging && IsClick();
         dragging = false;
         root.ReleasePointerCaptures();
+        if (!wasClick || e.GetCurrentPoint(root).Properties.PointerUpdateKind != Microsoft.UI.Input.PointerUpdateKind.LeftButtonReleased) return;
+
+        foreach (var (sid, cell) in cells)
+        {
+            var p = e.GetCurrentPoint(cell.Box).Position;
+            if (p.X < 0 || p.Y < 0 || p.X > cell.Box.ActualWidth || p.Y > cell.Box.ActualHeight) continue;
+            var pid = store.Snapshot().FirstOrDefault(r => r.Id == sid)?.Pid ?? 0;
+            if (pid > 0) Native.FocusProcessWindow(pid);
+            break;
+        }
+    }
+
+    bool IsClick()
+    {
+        Native.GetCursorPos(out var c);
+        return Math.Abs(c.X - dragStart.X) <= 4 && Math.Abs(c.Y - dragStart.Y) <= 4;
     }
 
     // ---------------------------------------------------------- layout
