@@ -29,6 +29,7 @@ public sealed class BarWindow : Window
         public Border Box = null!;
         public Ellipse Dot = null!;
         public TextBlock Label = null!;
+        public Button Close = null!;
     }
 
     static readonly Dictionary<SessState, Color> StateColors = new()
@@ -333,16 +334,30 @@ public sealed class BarWindow : Window
     {
         var dot = new Ellipse { Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 6, 0) };
         var label = new TextBlock { FontSize = fontSize, FontFamily = new FontFamily("Segoe UI"), VerticalAlignment = VerticalAlignment.Center };
+        var close = new Button
+        {
+            Content = "×",
+            FontSize = fontSize,
+            Width = 18,
+            Height = 18,
+            Padding = new Thickness(0),
+            Margin = new Thickness(4, 0, 0, 0),
+            Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Thickness(0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(close, "Remove session");
         var row = new StackPanel { Orientation = Orientation.Horizontal };
         row.Children.Add(dot);
         row.Children.Add(label);
+        row.Children.Add(close);
         var box = new Border
         {
             Child = row,
             Padding = new Thickness(8, 2, 8, 2),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
-        return new Cell { Box = box, Dot = dot, Label = label };
+        return new Cell { Box = box, Dot = dot, Label = label, Close = close };
     }
 
     void RefreshCells()
@@ -366,11 +381,18 @@ public sealed class BarWindow : Window
                 if (!cells.TryGetValue(r.Id, out var cell))
                 {
                     cells[r.Id] = cell = MakeCell();
+                    var sid = r.Id;
+                    cell.Close.Click += (_, _) =>
+                    {
+                        store.Remove(sid);
+                        RefreshCells();
+                    };
                     changed = true;
                 }
                 var waiting = r.State == SessState.Waiting;
                 cell.Box.Background = new SolidColorBrush(waiting ? th.Wait : th.Bg);
                 cell.Label.Foreground = new SolidColorBrush(th.Fg);
+                cell.Close.Foreground = new SolidColorBrush(th.Fg);
                 cell.Dot.Fill = new SolidColorBrush(StateColors[r.State]);
 
                 var label = r.State switch { SessState.Working => "working", SessState.Waiting => "needs you", _ => "idle" };
