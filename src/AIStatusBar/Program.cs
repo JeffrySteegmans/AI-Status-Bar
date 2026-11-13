@@ -26,7 +26,11 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        Native.AttachConsole(-1); // print to the parent console when started from one
+        if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?") ||
+            args.Contains("--print-config") || args.Contains("--install-copilot") ||
+            args.Contains("--uninstall") || args.Contains("--no-ui") ||
+            (args.Length > 0 && args[0] == "--install"))
+            Native.AttachConsole(-1);
 
         if (args.Contains("--help") || args.Contains("-h") || args.Contains("/?"))
         {
@@ -55,6 +59,7 @@ static class Program
         {
             if (!new[] { "tl", "tc", "tr", "bl", "bc", "br" }.Contains(args[ci + 1]))
             {
+                Native.AttachConsole(-1);
                 Console.Error.WriteLine("--corner must be one of: tl tc tr bl bc br");
                 return 2;
             }
