@@ -285,6 +285,15 @@ public sealed class SessionStore
         lock (gate) state.Clear();
     }
 
+    public void Remove(string sid)
+    {
+        lock (gate)
+        {
+            state.Remove(sid);
+            usage.TryRemove(sid, out _);
+        }
+    }
+
     public void AddTokens(string sid, long n)
     {
         lock (gate)
