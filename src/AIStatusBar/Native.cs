@@ -15,6 +15,8 @@ static class Native
     struct MONITORINFO { public int cbSize; public RECT rcMonitor, rcWork; public int dwFlags; }
 
     [DllImport("kernel32.dll")] public static extern bool AttachConsole(int pid);
+    [DllImport("kernel32.dll")] static extern bool FreeConsole();
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string? title);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string? title);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -147,7 +149,17 @@ static class Native
             keybd_event(0x12, 0, 2, UIntPtr.Zero);
             return SetForegroundWindow(h);
         }
-        return false;
+        if (!AttachConsole(pid)) return false;
+        try
+        {
+            var h = GetConsoleWindow();
+            if (h == IntPtr.Zero || !IsWindowVisible(h)) return false;
+            if (IsIconic(h)) ShowWindow(h, 9); // SW_RESTORE
+            keybd_event(0x12, 0, 0, UIntPtr.Zero);
+            keybd_event(0x12, 0, 2, UIntPtr.Zero);
+            return SetForegroundWindow(h);
+        }
+        finally { FreeConsole(); }
     }
 
     public static void ForceTopmost(IntPtr hwnd) =>
